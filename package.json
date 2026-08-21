@@ -1,0 +1,9 @@
+{
+  "name": "onboarding-buddy-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serverless proxy for the Onboarding Buddy live demo. Keeps Gemini and AstraDB credentials server-side.",
+  "engines": {
+    "node": ">=18"
+  }
+}
