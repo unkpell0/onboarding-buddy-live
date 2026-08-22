@@ -38,7 +38,9 @@ const hits = new Map();
 
 function isRateLimited(ip) {
   const now = Date.now();
-  const timestamps = (hits.get(ip) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  const timestamps = (hits.get(ip) || []).filter(
+    (t) => now - t < RATE_LIMIT_WINDOW_MS,
+  );
   timestamps.push(now);
   hits.set(ip, timestamps);
   return timestamps.length > RATE_LIMIT_MAX;
@@ -47,14 +49,17 @@ function isRateLimited(ip) {
 // --- Gemini helpers -------------------------------------------------------
 
 async function embedText(text) {
-  const model = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-001';
+  const model = process.env.GEMINI_EMBED_MODEL || "gemini-embedding-001";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${process.env.GOOGLE_API_KEY}`;
   const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content: { parts: [{ text }] } }),
   });
-  if (!resp.ok) throw new Error(`Embedding request failed: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok)
+    throw new Error(
+      `Embedding request failed: ${resp.status} ${await resp.text()}`,
+    );
   const data = await resp.json();
   return data.embedding.values;
 }
@@ -62,14 +67,19 @@ async function embedText(text) {
 async function generateText(model, prompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GOOGLE_API_KEY}`;
   const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+    }),
   });
-  if (!resp.ok) throw new Error(`Generation request failed: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok)
+    throw new Error(
+      `Generation request failed: ${resp.status} ${await resp.text()}`,
+    );
   const data = await resp.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from model');
+  if (!text) throw new Error("Empty response from model");
   return text.trim();
 }
 
@@ -118,17 +128,17 @@ Jawaban:`;
 // --- AstraDB ---------------------------------------------------------------
 
 async function searchAstra(vector) {
-  const endpoint = process.env.ASTRA_DB_API_ENDPOINT.replace(/\/+$/, '');
-  const namespace = process.env.ASTRA_DB_NAMESPACE || 'default_keyspace';
+  const endpoint = process.env.ASTRA_DB_API_ENDPOINT.replace(/\/+$/, "");
+  const namespace = process.env.ASTRA_DB_NAMESPACE || "default_keyspace";
   const collection = process.env.ASTRA_DB_COLLECTION;
-  const contentField = process.env.CONTENT_FIELD || 'text';
+  const contentField = process.env.CONTENT_FIELD || "text";
 
   const url = `${endpoint}/api/json/v1/${namespace}/${collection}`;
   const resp = await fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'Token': process.env.ASTRA_DB_APPLICATION_TOKEN,
+      "Content-Type": "application/json",
+      Token: process.env.ASTRA_DB_APPLICATION_TOKEN,
     },
     body: JSON.stringify({
       find: {
@@ -138,14 +148,17 @@ async function searchAstra(vector) {
     }),
   });
 
-  if (!resp.ok) throw new Error(`AstraDB request failed: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok)
+    throw new Error(
+      `AstraDB request failed: ${resp.status} ${await resp.text()}`,
+    );
   const data = await resp.json();
   const documents = data?.data?.documents || [];
 
   return documents
-    .filter(doc => (doc.$similarity ?? 0) >= SIMILARITY_THRESHOLD)
-    .map(doc => ({
-      text: doc[contentField] || '',
+    .filter((doc) => (doc.$similarity ?? 0) >= SIMILARITY_THRESHOLD)
+    .map((doc) => ({
+      text: doc[contentField] || "",
       similarity: doc.$similarity,
       filePath: doc.file_path || null,
     }));
@@ -154,55 +167,78 @@ async function searchAstra(vector) {
 // --- handler ----------------------------------------------------------------
 
 module.exports = async (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader("Content-Type", "application/json");
 
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
     return;
   }
 
-  const ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+  const ip = (
+    req.headers["x-forwarded-for"] ||
+    req.socket?.remoteAddress ||
+    "unknown"
+  )
+    .split(",")[0]
+    .trim();
   if (isRateLimited(ip)) {
-    res.status(429).json({ error: 'Too many requests. Please wait a few minutes and try again.' });
+    res
+      .status(429)
+      .json({
+        error: "Too many requests. Please wait a few minutes and try again.",
+      });
     return;
   }
 
   const { question, history } = req.body || {};
 
-  if (!question || typeof question !== 'string' || !question.trim()) {
-    res.status(400).json({ error: 'Missing question' });
+  if (!question || typeof question !== "string" || !question.trim()) {
+    res.status(400).json({ error: "Missing question" });
     return;
   }
   if (question.length > MAX_QUESTION_LENGTH) {
-    res.status(400).json({ error: `Question too long (max ${MAX_QUESTION_LENGTH} characters)` });
+    res
+      .status(400)
+      .json({
+        error: `Question too long (max ${MAX_QUESTION_LENGTH} characters)`,
+      });
     return;
   }
 
-  const chatHistoryText = Array.isArray(history) && history.length
-    ? history.map(h => `${h.role === 'user' ? 'User' : 'AI'}: ${h.content}`).join('\n')
-    : '(tidak ada riwayat sebelumnya)';
+  const chatHistoryText =
+    Array.isArray(history) && history.length
+      ? history
+          .map((h) => `${h.role === "user" ? "User" : "AI"}: ${h.content}`)
+          .join("\n")
+      : "(tidak ada riwayat sebelumnya)";
 
   try {
     let standaloneQuestion = question.trim();
 
     if (Array.isArray(history) && history.length) {
-      const condenseModel = process.env.GEMINI_CONDENSE_MODEL || 'gemini-2.5-flash';
+      const condenseModel =
+        process.env.GEMINI_CONDENSE_MODEL || "gemini-2.5-flash";
       standaloneQuestion = await generateText(
         condenseModel,
-        buildCondensePrompt(chatHistoryText, question.trim())
+        buildCondensePrompt(chatHistoryText, question.trim()),
       );
     }
 
     const vector = await embedText(standaloneQuestion);
     const matches = await searchAstra(vector);
     const context = matches.length
-      ? matches.map(m => m.text).join('\n\n---\n\n')
-      : '(tidak ada dokumen relevan ditemukan)';
+      ? matches.map((m) => m.text).join("\n\n---\n\n")
+      : "(tidak ada dokumen relevan ditemukan)";
 
-    const answerModel = process.env.GEMINI_ANSWER_MODEL || 'gemini-2.5-flash-lite';
+    const answerModel =
+      process.env.GEMINI_ANSWER_MODEL || "gemini-2.5-flash-lite";
     const answer = await generateText(
       answerModel,
-      buildAnswerPrompt({ chatHistory: chatHistoryText, context, question: standaloneQuestion })
+      buildAnswerPrompt({
+        chatHistory: chatHistoryText,
+        context,
+        question: standaloneQuestion,
+      }),
     );
 
     res.status(200).json({
@@ -211,9 +247,9 @@ module.exports = async (req, res) => {
       matchedChunks: matches.length,
     });
   } catch (err) {
-    console.error('ask.js error:', err);
+    console.error("ask.js error:", err);
     res.status(500).json({
-      error: 'Something went wrong reaching the database or model. If this is the first request in a while, AstraDB may be waking up from hibernation — please try again in about a minute.',
+      error: "DEBUG: " + err.message,
     });
   }
 };
